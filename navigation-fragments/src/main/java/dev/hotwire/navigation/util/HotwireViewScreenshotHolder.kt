@@ -93,8 +93,10 @@ internal class HotwireViewScreenshotHolder {
     }
 
     private fun hasEnoughMemoryForScreenshot(): Boolean {
+        // totalMemory() is the heap's current size, not what's in use. ART can reserve the whole
+        // heap up front, making it equal maxMemory(), which would skip every screenshot.
         val runtime = Runtime.getRuntime()
-        val used = runtime.totalMemory().toFloat()
+        val used = (runtime.totalMemory() - runtime.freeMemory()).toFloat()
         val max = runtime.maxMemory().toFloat()
         val remaining = 1f - (used / max)
 
