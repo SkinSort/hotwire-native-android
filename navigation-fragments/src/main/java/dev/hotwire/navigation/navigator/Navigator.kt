@@ -3,6 +3,8 @@ package dev.hotwire.navigation.navigator
 import android.os.Bundle
 import android.view.ViewGroup
 import androidx.annotation.IdRes
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavController
 import androidx.navigation.NavOptions
@@ -212,10 +214,11 @@ class Navigator(
             // If a dialog is on top of the backstack, close it first
             currentDialogDestination?.closeDialog()
 
+            // Stop if a pop is refused, otherwise the loop never terminates.
             do {
-                navController.popBackStack()
-            } while(
-                !isAtStartDestination()
+                val popped = navController.popBackStack()
+            } while (
+                popped && !isAtStartDestination()
             )
 
             onCleared()
@@ -261,13 +264,35 @@ class Navigator(
 
     private fun navigateWhenReady(onReady: () -> Unit) {
         val destination = currentDestination
+        val onReadyWhenStateAllows = { runWhenFragmentStateNotSaved(onReady) }
 
         if (destination != null) {
             destination.onBeforeNavigation()
-            destination.prepareNavigation(onReady)
+            destination.prepareNavigation(onReadyWhenStateAllows)
         } else {
-            onReady()
+            onReadyWhenStateAllows()
         }
+    }
+
+    /**
+     * The fragment navigators silently ignore navigate/pop calls once the FragmentManager
+     * has saved its state (e.g. the app was backgrounded, or another Activity such as a
+     * paywall is on top). Defer the navigation until the host is started again so it is
+     * neither dropped nor spun on by the pop loops, which previously caused ANRs.
+     */
+    private fun runWhenFragmentStateNotSaved(block: () -> Unit) {
+        if (!host.isAdded || !host.childFragmentManager.isStateSaved) {
+            block()
+            return
+        }
+
+        logEvent("navigationDeferredUntilStarted")
+        host.lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onStart(owner: LifecycleOwner) {
+                owner.lifecycle.removeObserver(this)
+                block()
+            }
+        })
     }
 
     private fun navigateWithinContext(rule: NavigatorRule) {
@@ -349,21 +374,22 @@ class Navigator(
     }
 
     private fun popModalsFromBackStack(rule: NavigatorRule) {
+        // Stop if a pop is refused, otherwise the loop never terminates.
         do {
-            popBackStack(rule)
+            val popped = popBackStack(rule)
         } while (
-            rule.controller.currentBackStackEntry.isModalContext
+            popped && rule.controller.currentBackStackEntry.isModalContext
         )
     }
 
-    private fun popBackStack(rule: NavigatorRule) {
+    private fun popBackStack(rule: NavigatorRule): Boolean {
         logEvent(
             "popFromBackStack",
             "location" to rule.controller.currentBackStackEntry.location.orEmpty()
         )
 
         currentDialogDestination = null
-        rule.controller.popBackStack()
+        return rule.controller.popBackStack()
     }
 
     private fun sendModalResult(rule: NavigatorRule) {
