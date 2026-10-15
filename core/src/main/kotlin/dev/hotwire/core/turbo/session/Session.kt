@@ -636,8 +636,14 @@ class Session(
             null
         }
 
-        // Only initiate a restore visit if a restorationIdentifier is available
-        val options = if (visit.options.action == VisitAction.RESTORE && restorationIdentifier == null) {
+        // Only restore a reattached destination if a restorationIdentifier is available. A visit
+        // routed with an explicit restore action (e.g. going back within a modal) is kept, and
+        // Turbo serves it from its snapshot cache.
+        val options = if (
+            visit.options.action == VisitAction.RESTORE &&
+            restorationIdentifier == null &&
+            visit.restoreWithCachedSnapshot
+        ) {
             visit.options.copy(action = VisitAction.ADVANCE)
         } else {
             visit.options
