@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.PixelCopy
 import android.view.View
+import android.view.Window
 import dev.hotwire.navigation.logging.logError
 import dev.hotwire.navigation.logging.logDebug
 import dev.hotwire.navigation.views.HotwireView
@@ -35,16 +36,19 @@ internal class HotwireViewScreenshotHolder {
         }
     }
 
-    suspend fun captureScreenshot(hotwireView: HotwireView) {
-        bitmap = copyViewToBitmap(hotwireView)
+    /**
+     * Captures [hotwireView] from [window], the window it's drawn in. Defaults to its
+     * activity's window.
+     */
+    suspend fun captureScreenshot(hotwireView: HotwireView, window: Window? = null) {
+        bitmap = copyViewToBitmap(hotwireView, window ?: hotwireView.getActivity()?.window)
         screenshotOrientation = hotwireView.currentOrientation()
         screenshotZoomed = currentlyZoomed
     }
 
-    private suspend fun copyViewToBitmap(hotwireView: HotwireView): Bitmap? {
+    private suspend fun copyViewToBitmap(hotwireView: HotwireView, window: Window?): Bitmap? {
         return suspendCancellableCoroutine { continuation ->
             val start = System.currentTimeMillis()
-            val window = hotwireView.getActivity()?.window
 
             if (window == null || !hotwireView.isLaidOut || !hasEnoughMemoryForScreenshot() ||
                 hotwireView.width <= 0 || hotwireView.height <= 0

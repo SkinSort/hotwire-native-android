@@ -6,6 +6,7 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
 import androidx.activity.result.contract.ActivityResultContracts.RequestPermission
 import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult
+import androidx.fragment.app.DialogFragment
 import androidx.lifecycle.Lifecycle.State.STARTED
 import androidx.lifecycle.findViewTreeLifecycleOwner
 import androidx.lifecycle.lifecycleScope
@@ -475,7 +476,10 @@ internal class HotwireWebFragmentDelegate(
 
     private suspend fun screenshotView() {
         hotwireView?.let {
-            screenshotHolder.captureScreenshot(it)
+            // A dialog fragment (e.g. a bottom sheet) draws in its dialog's window, not the
+            // activity's. Copying from the activity's window would capture the screen beneath it.
+            val dialogWindow = (navDestination.fragment as? DialogFragment)?.dialog?.window
+            screenshotHolder.captureScreenshot(it, dialogWindow)
             screenshotHolder.showScreenshotIfAvailable(it)
         }
     }
