@@ -281,7 +281,18 @@ internal class HotwireWebFragmentDelegate(
     }
 
     override fun onRenderProcessGone() {
-        navigator.route(location, VisitOptions(action = VisitAction.REPLACE))
+        // Routing requires the host's navigation graph, which may not be set
+        // yet (like while the app is backgrounded). The destination creates a
+        // new session when its view is created again.
+        if (!navigator.isReady()) return
+
+        if (navDestination.isModal) {
+            // Replacing the modal's own location resolves to `REPLACE_ROOT` on
+            // its first page, which isn't allowed in a modal context. Dismiss it.
+            navigator.pop()
+        } else {
+            navigator.route(location, VisitOptions(action = VisitAction.REPLACE))
+        }
     }
 
     override fun requestFailedWithError(visitHasCachedSnapshot: Boolean, error: VisitError) {
@@ -359,7 +370,9 @@ internal class HotwireWebFragmentDelegate(
             return
         }
 
-        view.attachWebView(webView) { attachedToNewDestination ->
+        // The attachment is posted, so the destination may have been removed
+        // by the time it runs. Don't attach the shared WebView to it then.
+        view.attachWebView(webView, canAttach = { navDestination.isActive }) { attachedToNewDestination ->
             onReady(attachedToNewDestination)
 
             if (attachedToNewDestination) {
