@@ -31,7 +31,11 @@ class HotwireView @JvmOverloads constructor(context: Context, attrs: AttributeSe
     internal val webViewRefresh: SwipeRefreshLayout? get() = webViewContainer as? SwipeRefreshLayout
     internal val errorRefresh: SwipeRefreshLayout? get() = findViewById(R.id.hotwire_error_refresh)
 
-    internal fun attachWebView(webView: WebView, onAttachedToNewDestination: (Boolean) -> Unit) {
+    internal fun attachWebView(
+        webView: WebView,
+        canAttach: () -> Boolean = { true },
+        onAttachedToNewDestination: (Boolean) -> Unit
+    ) {
         if (webView.parent != null) {
             onAttachedToNewDestination(false)
             return
@@ -46,8 +50,10 @@ class HotwireView @JvmOverloads constructor(context: Context, attrs: AttributeSe
             // To avoid edge-case lifecycle issues, ensure that the
             // view is still attached to the window and the webview
             // doesn't have a new parent, since we have no control
-            // over the message queue.
-            if (isAttachedToWindow && webView.parent == null) {
+            // over the message queue. The owning destination can also
+            // be removed (like a dismissed bottom sheet) while its view
+            // is still attached, so check that it can still attach.
+            if (isAttachedToWindow && webView.parent == null && canAttach()) {
                 webView.updateLayoutParams {
                     height = when (webViewContainer) {
                         is ScrollingView -> LayoutParams.WRAP_CONTENT
