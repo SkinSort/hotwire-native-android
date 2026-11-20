@@ -1,6 +1,7 @@
 package dev.hotwire.navigation.views
 
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.drawable.ColorDrawable
 import android.util.AttributeSet
@@ -141,5 +142,9 @@ class HotwireView @JvmOverloads constructor(context: Context, attrs: AttributeSe
 
     internal fun currentOrientation(): Int {
         return context.resources.configuration.orientation
+    }
+
+    internal fun currentNightMode(): Int {
+        return context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
     }
 }

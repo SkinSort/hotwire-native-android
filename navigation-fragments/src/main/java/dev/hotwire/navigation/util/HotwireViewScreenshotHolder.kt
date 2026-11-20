@@ -19,17 +19,25 @@ import kotlin.coroutines.resume
 internal class HotwireViewScreenshotHolder {
     private var bitmap: Bitmap? = null
     private var screenshotOrientation = 0
+    private var screenshotNightMode = 0
     private var screenshotZoomed = false
     var currentlyZoomed = false
 
     fun reset() {
         bitmap = null
         screenshotOrientation = 0
+        screenshotNightMode = 0
         screenshotZoomed = false
     }
 
+    /**
+     * Shows the screenshot unless the page would no longer look like it: rotated, zoomed
+     * differently, or in the other Light / Dark mode (an app can switch it without recreating the
+     * activity, so a page further back would flash its old colors before restoring).
+     */
     fun showScreenshotIfAvailable(hotwireView: HotwireView) {
         if (screenshotOrientation == hotwireView.currentOrientation() &&
+            screenshotNightMode == hotwireView.currentNightMode() &&
             screenshotZoomed == currentlyZoomed
         ) {
             bitmap?.let { hotwireView.addScreenshot(it) }
@@ -43,6 +51,7 @@ internal class HotwireViewScreenshotHolder {
     suspend fun captureScreenshot(hotwireView: HotwireView, window: Window? = null) {
         bitmap = copyViewToBitmap(hotwireView, window ?: hotwireView.getActivity()?.window)
         screenshotOrientation = hotwireView.currentOrientation()
+        screenshotNightMode = hotwireView.currentNightMode()
         screenshotZoomed = currentlyZoomed
     }
 
