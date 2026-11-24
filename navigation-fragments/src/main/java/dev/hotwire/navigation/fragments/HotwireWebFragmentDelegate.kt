@@ -1,6 +1,7 @@
 package dev.hotwire.navigation.fragments
 
 import android.content.Intent
+import android.view.ViewGroup
 import android.webkit.HttpAuthHandler
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
@@ -80,16 +81,6 @@ internal class HotwireWebFragmentDelegate(
 
     /**
      * Should be called by the implementing Fragment during
-     * [androidx.fragment.app.Fragment.onViewCreated].
-     */
-    fun onViewCreated() {
-        if (session.isRenderProcessGone) {
-            navigator.createNewSession()
-        }
-    }
-
-    /**
-     * Should be called by the implementing Fragment during
      * [androidx.fragment.app.Fragment.onStart].
      */
     fun onStart() {
@@ -129,6 +120,11 @@ internal class HotwireWebFragmentDelegate(
      * dispatching native:restore and reconnecting bridge components on the page.
      */
     private fun reattachWebViewAndRestoreWithoutVisit() {
+        if (session.isRenderProcessGone) {
+            initNavigationVisit()
+            return
+        }
+
         initView()
         attachWebView {
             isWebViewAttachedToNewDestination = it
@@ -281,18 +277,14 @@ internal class HotwireWebFragmentDelegate(
     }
 
     override fun onRenderProcessGone() {
-        // Routing requires the host's navigation graph, which may not be set
-        // yet (like while the app is backgrounded). The destination creates a
-        // new session when its view is created again.
-        if (!navigator.isReady()) return
+        // Detach the WebView right away so the navigator can replace its
+        // session, then visit this destination's location with the new WebView.
+        val goneWebView = webView
+        (goneWebView.parent as? ViewGroup)?.removeView(goneWebView)
+        callback.onWebViewDetached(goneWebView)
 
-        if (navDestination.isModal) {
-            // Replacing the modal's own location resolves to `REPLACE_ROOT` on
-            // its first page, which isn't allowed in a modal context. Dismiss it.
-            navigator.pop()
-        } else {
-            navigator.route(location, VisitOptions(action = VisitAction.REPLACE))
-        }
+        initNavigationVisit()
+        initWebChromeClient()
     }
 
     override fun requestFailedWithError(visitHasCachedSnapshot: Boolean, error: VisitError) {
@@ -343,6 +335,7 @@ internal class HotwireWebFragmentDelegate(
     }
 
     private fun initNavigationVisit() {
+        navigator.replaceSessionIfRenderProcessGone(navDestination.isModal)
         initView()
         attachWebViewAndVisit()
     }
@@ -425,7 +418,7 @@ internal class HotwireWebFragmentDelegate(
     }
 
     private fun title(): String {
-        return webView.title ?: ""
+        return displayTitle(webView.title, webView.url)
     }
 
     private fun registerFileChooserLauncher(): ActivityResultLauncher<Intent> {
@@ -488,11 +481,12 @@ internal class HotwireWebFragmentDelegate(
     }
 
     private suspend fun screenshotView() {
-        hotwireView?.let {
-            // A dialog fragment (e.g. a bottom sheet) draws in its dialog's window, not the
-            // activity's. Copying from the activity's window would capture the screen beneath it.
-            val dialogWindow = (navDestination.fragment as? DialogFragment)?.dialog?.window
-            screenshotHolder.captureScreenshot(it, dialogWindow)
+        hotwireView?.takeIf { it.isAttachedToWindow }?.let {
+            val window = (navDestination.fragment as? DialogFragment)?.dialog?.window
+                ?: navDestination.fragment.activity?.window
+                ?: return
+
+            screenshotHolder.captureScreenshot(it, window)
             screenshotHolder.showScreenshotIfAvailable(it)
         }
     }
