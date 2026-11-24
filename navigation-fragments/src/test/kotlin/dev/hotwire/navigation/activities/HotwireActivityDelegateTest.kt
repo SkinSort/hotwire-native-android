@@ -1,12 +1,12 @@
 package dev.hotwire.navigation.activities
 
-import androidx.navigation.NavController
-import com.nhaarman.mockito_kotlin.mock
-import com.nhaarman.mockito_kotlin.never
-import com.nhaarman.mockito_kotlin.times
-import com.nhaarman.mockito_kotlin.verify
-import com.nhaarman.mockito_kotlin.whenever
-import dev.hotwire.navigation.navigator.Navigator
+import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import androidx.fragment.app.Fragment
 import dev.hotwire.navigation.navigator.NavigatorConfiguration
 import dev.hotwire.navigation.navigator.NavigatorHost
 import org.assertj.core.api.Assertions.assertThat
@@ -15,159 +15,93 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 
+// A screen that hosts a nested NavigatorHost can be replaced by a new instance of itself. The new
+// nested host is created before the old one is destroyed, and both use the same view ID.
 @RunWith(RobolectricTestRunner::class)
 class HotwireActivityDelegateTest {
 
     private lateinit var activity: TestActivity
-    private lateinit var delegate: HotwireActivityDelegate
 
     @Before
     fun setUp() {
-        activity = Robolectric.buildActivity(TestActivity::class.java).create().get()
-        delegate = activity.delegate
+        activity = Robolectric.buildActivity(TestActivity::class.java).setup().get()
     }
 
     @Test
-    fun `does not boot the current host while start locations are held`() {
-        val host = navigatorHost(mainConfig)
+    fun `new nested host loads its graph while the old host with the same id is still registered`() {
+        addScreen(CONTAINER_A_ID)
 
-        delegate.holdStartLocations()
-        delegate.registerNavigatorHost(host)
+        val newScreen = addScreen(CONTAINER_B_ID)
 
-        assertThat(delegate.isHoldingStartLocations).isTrue()
-        verify(host, never()).initControllerGraphIfNeeded()
+        assertThat(newScreen.navigatorHost.isGraphInitialized).isTrue()
     }
 
     @Test
-    fun `releasing start locations boots the current host`() {
-        val host = navigatorHost(mainConfig)
+    fun `destroying the old nested host keeps the new host with the same id registered`() {
+        val oldScreen = addScreen(CONTAINER_A_ID)
+        val newScreen = addScreen(CONTAINER_B_ID)
 
-        delegate.holdStartLocations()
-        delegate.registerNavigatorHost(host)
-        delegate.releaseStartLocations()
+        activity.supportFragmentManager.beginTransaction().remove(oldScreen).commitNow()
 
-        assertThat(delegate.isHoldingStartLocations).isFalse()
-        verify(host).initControllerGraphIfNeeded()
+        assertThat(activity.delegate.findNavigatorHost(NESTED_HOST_ID))
+            .isSameAs(newScreen.navigatorHost)
     }
 
     @Test
-    fun `releasing start locations leaves a lazy non-current host unbooted`() {
-        val currentHost = navigatorHost(mainConfig)
-        val lazyHost = navigatorHost(secondaryConfig)
+    fun `destroying the old nested host only destroys its own WebView`() {
+        val oldScreen = addScreen(CONTAINER_A_ID)
+        val newScreen = addScreen(CONTAINER_B_ID)
+        val oldWebView = oldScreen.navigatorHost.navigator.session.webView
+        val newWebView = newScreen.navigatorHost.navigator.session.webView
 
-        delegate.setLazyNavigatorHosts(listOf(mainConfig.navigatorHostId, secondaryConfig.navigatorHostId))
-        delegate.holdStartLocations()
-        delegate.registerNavigatorHost(currentHost)
-        delegate.registerNavigatorHost(lazyHost)
-        delegate.releaseStartLocations()
+        activity.supportFragmentManager.beginTransaction().remove(oldScreen).commitNow()
 
-        verify(currentHost).initControllerGraphIfNeeded()
-        verify(lazyHost, never()).initControllerGraphIfNeeded()
+        assertThat(shadowOf(oldWebView).wasDestroyCalled()).isTrue()
+        assertThat(shadowOf(newWebView).wasDestroyCalled()).isFalse()
     }
 
-    @Test
-    fun `releasing start locations is idempotent`() {
-        val host = navigatorHost(mainConfig)
-
-        delegate.holdStartLocations()
-        delegate.registerNavigatorHost(host)
-        delegate.releaseStartLocations()
-        delegate.releaseStartLocations()
-
-        verify(host, times(1)).initControllerGraphIfNeeded()
+    private fun addScreen(containerId: Int): NestedHostScreen {
+        val screen = NestedHostScreen()
+        activity.supportFragmentManager.beginTransaction().add(containerId, screen).commitNow()
+        return screen
     }
 
-    @Test
-    fun `releasing start locations is a no-op when nothing is held`() {
-        val host = navigatorHost(mainConfig)
+    class NestedHostScreen : Fragment() {
+        val navigatorHost get() = childFragmentManager.findFragmentById(NESTED_HOST_ID) as NavigatorHost
 
-        delegate.registerNavigatorHost(host)
-        delegate.releaseStartLocations()
+        override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+            return FrameLayout(requireContext()).apply { id = NESTED_HOST_ID }
+        }
 
-        // Booted once on registration, not again on release.
-        verify(host, times(1)).initControllerGraphIfNeeded()
+        override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+            childFragmentManager.beginTransaction().add(NESTED_HOST_ID, NavigatorHost()).commitNow()
+        }
     }
 
-    @Test
-    fun `the tab selected while held is remembered and booted on release`() {
-        val mainHost = navigatorHost(mainConfig)
-        val secondaryHost = navigatorHost(secondaryConfig)
+    class TestActivity : HotwireActivity() {
+        override fun navigatorConfigurations() = listOf(
+            NavigatorConfiguration(
+                name = "nested",
+                startLocation = "https://example.com/start",
+                navigatorHostId = NESTED_HOST_ID
+            )
+        )
 
-        delegate.setLazyNavigatorHosts(listOf(mainConfig.navigatorHostId, secondaryConfig.navigatorHostId))
-        delegate.holdStartLocations()
-        delegate.registerNavigatorHost(mainHost)
-        delegate.registerNavigatorHost(secondaryHost)
-        delegate.setCurrentNavigator(secondaryConfig)
-
-        verify(secondaryHost, never()).initControllerGraphIfNeeded()
-
-        delegate.releaseStartLocations()
-
-        verify(secondaryHost).initControllerGraphIfNeeded()
-        verify(mainHost, never()).initControllerGraphIfNeeded()
-    }
-
-    // Production ordering: HotwireBottomNavigationController.load() runs in Activity.onCreate()
-    // and selects the initial tab before any NavigatorHost view is created (hosts register in
-    // onStart), so setCurrentNavigator() is called against an empty host map.
-    @Test
-    fun `current navigator selected before any host registers is booted on release`() {
-        delegate.setLazyNavigatorHosts(listOf(mainConfig.navigatorHostId, secondaryConfig.navigatorHostId))
-        delegate.holdStartLocations()
-        delegate.setCurrentNavigator(secondaryConfig)
-
-        val currentHost = navigatorHost(secondaryConfig)
-        val lazyHost = navigatorHost(mainConfig)
-        delegate.registerNavigatorHost(currentHost)
-        delegate.registerNavigatorHost(lazyHost)
-
-        verify(currentHost, never()).initControllerGraphIfNeeded()
-        verify(lazyHost, never()).initControllerGraphIfNeeded()
-
-        delegate.releaseStartLocations()
-
-        verify(currentHost).initControllerGraphIfNeeded()
-        verify(lazyHost, never()).initControllerGraphIfNeeded()
-    }
-
-    @Test
-    fun `hosts registered after release boot normally`() {
-        delegate.holdStartLocations()
-        delegate.releaseStartLocations()
-
-        val host = navigatorHost(mainConfig)
-        delegate.registerNavigatorHost(host)
-
-        verify(host).initControllerGraphIfNeeded()
-    }
-
-    private fun navigatorHost(configuration: NavigatorConfiguration): NavigatorHost {
-        val navigator = mock<Navigator>()
-        whenever(navigator.configuration).thenReturn(configuration)
-
-        return mock<NavigatorHost>().also {
-            whenever(it.id).thenReturn(configuration.navigatorHostId)
-            whenever(it.navigator).thenReturn(navigator)
-            whenever(it.navController).thenReturn(mock<NavController>())
+        override fun onCreate(savedInstanceState: Bundle?) {
+            setTheme(androidx.appcompat.R.style.Theme_AppCompat_Light_NoActionBar)
+            super.onCreate(savedInstanceState)
+            setContentView(LinearLayout(this).apply {
+                addView(FrameLayout(context).apply { id = CONTAINER_A_ID })
+                addView(FrameLayout(context).apply { id = CONTAINER_B_ID })
+            })
         }
     }
 
     companion object {
-        private val mainConfig = NavigatorConfiguration(
-            name = "main",
-            startLocation = "https://example.com/main",
-            navigatorHostId = 1
-        )
-
-        private val secondaryConfig = NavigatorConfiguration(
-            name = "secondary",
-            startLocation = "https://example.com/secondary",
-            navigatorHostId = 2
-        )
-    }
-
-    private class TestActivity : HotwireActivity() {
-        override fun navigatorConfigurations() = listOf(mainConfig, secondaryConfig)
+        private val NESTED_HOST_ID = View.generateViewId()
+        private val CONTAINER_A_ID = View.generateViewId()
+        private val CONTAINER_B_ID = View.generateViewId()
     }
 }

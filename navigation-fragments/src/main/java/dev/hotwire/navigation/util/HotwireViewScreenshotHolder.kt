@@ -1,18 +1,17 @@
 package dev.hotwire.navigation.util
 
-import android.app.Activity
+import android.app.ActivityManager
 import android.content.Context
-import android.content.ContextWrapper
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.view.PixelCopy
-import android.view.View
 import android.view.Window
 import dev.hotwire.navigation.logging.logError
 import dev.hotwire.navigation.logging.logDebug
 import dev.hotwire.navigation.views.HotwireView
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
@@ -44,34 +43,40 @@ internal class HotwireViewScreenshotHolder {
         }
     }
 
-    /**
-     * Captures [hotwireView] from [window], the window it's drawn in. Defaults to its
-     * activity's window.
-     */
-    suspend fun captureScreenshot(hotwireView: HotwireView, window: Window? = null) {
-        bitmap = copyViewToBitmap(hotwireView, window ?: hotwireView.getActivity()?.window)
+    suspend fun captureScreenshot(hotwireView: HotwireView, window: Window) {
+        bitmap = copyViewToBitmap(hotwireView, window)
         screenshotOrientation = hotwireView.currentOrientation()
         screenshotNightMode = hotwireView.currentNightMode()
         screenshotZoomed = currentlyZoomed
     }
 
-    private suspend fun copyViewToBitmap(hotwireView: HotwireView, window: Window?): Bitmap? {
+    private suspend fun copyViewToBitmap(hotwireView: HotwireView, window: Window): Bitmap? {
         return suspendCancellableCoroutine { continuation ->
             val start = System.currentTimeMillis()
+            val rect = Rect().also { hotwireView.getGlobalVisibleRect(it) }
+            val neededBytes = rect.width().toLong() * rect.height() * BYTES_PER_PIXEL
+            val memoryInfo = hotwireView.context.memoryInfo()
 
-            if (window == null || !hotwireView.isLaidOut || !hasEnoughMemoryForScreenshot() ||
-                hotwireView.width <= 0 || hotwireView.height <= 0
-            ) {
-                if (continuation.isActive) {
-                    continuation.resume(null)
-                }
+            if (!hotwireView.isLaidOut || rect.isEmpty || !hasEnoughMemory(memoryInfo, neededBytes)) {
+                logDebug(
+                    "viewScreenshotSkipped", listOf(
+                        "laidOut" to hotwireView.isLaidOut,
+                        "size" to "${rect.width()}x${rect.height()}",
+                        "neededBytes" to neededBytes,
+                        "availableBytes" to memoryInfo.availMem - memoryInfo.threshold,
+                    )
+                )
+                continuation.resumeIfActive(null)
                 return@suspendCancellableCoroutine
             }
 
-            val rect = Rect()
-            hotwireView.getGlobalVisibleRect(rect)
-
-            val bitmap = Bitmap.createBitmap(rect.width(), rect.height(), Bitmap.Config.ARGB_8888)
+            val bitmap = try {
+                Bitmap.createBitmap(rect.width(), rect.height(), Bitmap.Config.ARGB_8888)
+            } catch (error: OutOfMemoryError) {
+                logError("viewScreenshotFailed", error)
+                continuation.resumeIfActive(null)
+                return@suspendCancellableCoroutine
+            }
 
             try {
                 PixelCopy.request(
@@ -84,47 +89,37 @@ internal class HotwireViewScreenshotHolder {
                                     "duration" to "${System.currentTimeMillis() - start}ms",
                                 )
                             )
-                            if (continuation.isActive) {
-                                continuation.resume(bitmap)
-                            }
+                            continuation.resumeIfActive(bitmap)
                         } else {
+                            bitmap.recycle()
                             logError("viewScreenshotFailed", Exception("PixelCopy failed with result $result"))
-                            if (continuation.isActive) {
-                                continuation.resume(null)
-                            }
+                            continuation.resumeIfActive(null)
                         }
                     },
                     Handler(Looper.getMainLooper())
                 )
             } catch (exception: Exception) {
+                bitmap.recycle()
                 logError("viewScreenshotFailed", exception)
-                if (continuation.isActive) {
-                    continuation.resume(null)
-                }
+                continuation.resumeIfActive(null)
             }
         }
     }
 
-    private fun hasEnoughMemoryForScreenshot(): Boolean {
-        // totalMemory() is the heap's current size, not what's in use. ART can reserve the whole
-        // heap up front, making it equal maxMemory(), which would skip every screenshot.
-        val runtime = Runtime.getRuntime()
-        val used = (runtime.totalMemory() - runtime.freeMemory()).toFloat()
-        val max = runtime.maxMemory().toFloat()
-        val remaining = 1f - (used / max)
-
-        return remaining > .20
+    internal fun hasEnoughMemory(memoryInfo: ActivityManager.MemoryInfo, neededBytes: Long): Boolean {
+        return !memoryInfo.lowMemory && memoryInfo.availMem - memoryInfo.threshold > neededBytes
     }
 
-    // Inspired by https://android.googlesource.com/platform/frameworks/base/+/master/core/java/android/app/MediaRouteButton.java#163
-    private fun View.getActivity(): Activity? {
-        var context: Context? = context
-        while (context is ContextWrapper) {
-            if (context is Activity) {
-                return context
-            }
-            context = context.baseContext
-        }
-        return null
+    private fun Context.memoryInfo(): ActivityManager.MemoryInfo {
+        val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        return ActivityManager.MemoryInfo().also { activityManager.getMemoryInfo(it) }
+    }
+
+    private fun <T> CancellableContinuation<T>.resumeIfActive(value: T) {
+        if (isActive) resume(value)
+    }
+
+    companion object {
+        private const val BYTES_PER_PIXEL = 4L
     }
 }

@@ -67,23 +67,45 @@ class Navigator(
 
     /**
      * The [Session] instance that is shared with all destinations that are
-     * hosted inside this [NavigatorHost].
+     * hosted inside this [NavigatorHost]. It's replaced with a new instance
+     * when its WebView's render process is gone, so don't keep a reference to
+     * it or its WebView.
      */
     var session = createSession(forModalContext = false)
         private set
 
     /**
-     * The [Session] instance that is shared with all modal context destinations
-     * that are hosted inside this [NavigatorHost]. Using a separate session for
-     * modals allows the default context WebView to retain its content while the
-     * modal is displayed.
+     * The session shared by modal destinations. Its separate WebView allows
+     * the default session to retain its page while a modal is visible.
      */
     var modalSession = createSession(forModalContext = true)
         private set
 
-    internal fun createNewSession() {
-        session = createSession(forModalContext = false)
-        modalSession = createSession(forModalContext = true)
+    internal fun replaceSessionIfRenderProcessGone(forModalContext: Boolean) {
+        val previousSession = if (forModalContext) modalSession else session
+        if (!previousSession.isRenderProcessGone) return
+
+        logEvent("replaceSessionIfRenderProcessGone", "modal" to forModalContext)
+        val newSession = createSession(forModalContext)
+        if (forModalContext) {
+            modalSession = newSession
+        } else {
+            session = newSession
+        }
+        previousSession.destroyWebView()
+    }
+
+    /** Called when the host is destroyed and neither session can be reused. */
+    internal fun destroySession() {
+        session.destroyWebView()
+        modalSession.destroyWebView()
+    }
+
+    private fun Session.destroyWebView() {
+        // Pending work from this session may still finish after replacement.
+        currentVisit?.callback = null
+        (webView.parent as? ViewGroup)?.removeView(webView)
+        webView.destroy()
     }
 
     private fun createSession(forModalContext: Boolean): Session {
@@ -93,7 +115,6 @@ class Navigator(
             activity = activity,
             webView = Hotwire.config.makeCustomWebView(activity)
         ).also {
-            // Initialize bridge with new WebView instance
             if (HotwireNavigation.registeredBridgeComponentFactories.isNotEmpty()) {
                 Bridge.initialize(it.webView)
             }
