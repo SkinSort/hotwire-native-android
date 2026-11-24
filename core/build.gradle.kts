@@ -1,10 +1,7 @@
 import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
-import com.vanniktech.maven.publish.SonatypeHost
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.library")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
     id("com.vanniktech.maven.publish")
 }
@@ -58,21 +55,15 @@ android {
     }
 
     sourceSets {
-        named("main")  { java { srcDirs("src/main/kotlin") } }
-        named("test")  { java { srcDirs("src/test/kotlin") } }
-        named("debug") { java { srcDirs("src/debug/kotlin") } }
-    }
-}
-
-kotlin {
-    compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_17)
+        named("main")  { kotlin { srcDirs("src/main/kotlin") } }
+        named("test")  { kotlin { srcDirs("src/test/kotlin") } }
+        named("debug") { kotlin { srcDirs("src/debug/kotlin") } }
     }
 }
 
 dependencies {
     // Kotlin
-    implementation("org.jetbrains.kotlin:kotlin-reflect:2.3.0")
+    implementation("org.jetbrains.kotlin:kotlin-reflect:2.4.10")
 
     // Material
     implementation("com.google.android.material:material:1.12.0")
@@ -139,7 +130,7 @@ mavenPublishing {
     
     coordinates(groupId = publishedGroupId, artifactId = publishedArtifactId, version = libVersionName)
 
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+    publishToMavenCentral()
 
     // Sign only if signingInMemoryKey is defined
     if (project.hasProperty("signingInMemoryKey")) {

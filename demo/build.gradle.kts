@@ -1,8 +1,6 @@
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
@@ -43,15 +41,9 @@ android {
     }
 
     sourceSets {
-        named("main")  { java { srcDirs("src/main/kotlin") } }
-        named("test")  { java { srcDirs("src/test/kotlin") } }
-        named("debug") { java { srcDirs("src/debug/kotlin") } }
-    }
-}
-
-kotlin {
-    compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_17)
+        named("main")  { kotlin { srcDirs("src/main/kotlin") } }
+        named("test")  { kotlin { srcDirs("src/test/kotlin") } }
+        named("debug") { kotlin { srcDirs("src/debug/kotlin") } }
     }
 }
 
